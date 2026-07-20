@@ -239,7 +239,8 @@ def fmt(rec):
         bits.append(subs)
     # per-library availability, so you know which queue to actually join
     avail = " · ".join(f"{LIB_TAG.get(l, l)} {status(copies[l])}" for l in sorted(copies))
-    url = f"https://libbyapp.com/library/{best_lib(copies)}/media/{it.get('id')}"
+    # Libby title-card deep link (SPA route); scoped to the shorter-wait library
+    url = f"https://libbyapp.com/search/{best_lib(copies)}/search/page-1/{it.get('id')}"
     return f"{title} — {author}\n   {' · '.join(bits)}\n   {avail}   {url}"
 
 
