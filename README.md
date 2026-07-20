@@ -32,7 +32,7 @@ uv run libbynf.py --genres               # list the genre names this catalog use
 uv run libbynf.py --all-genres -g romance  # fiction too (drop the nonfiction gate)
 uv run libbynf.py --bio                  # keep biographies (default strips them)
 uv run libbynf.py --sort popular -a      # most popular, available to borrow now
-uv run libbynf.py --goodreads            # Goodreads ratings (OverDrive's are stale)
+uv run libbynf.py --no-goodreads         # skip Goodreads (offline/faster); OverDrive star
 uv run libbynf.py --json > out.json      # raw filtered records for scripting
 uv run libbynf.py --selftest             # run the filter self-check
 ```
@@ -57,8 +57,8 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 | `--all-genres` | don't require the `Nonfiction` subject (lets fiction through) |
 | `--bio` | keep biographies/memoirs (default: strip them) |
 | `--adult` | require adult `Nonfiction`; drop young-adult/juvenile |
-| `--min-rating` | drop titles below this star rating (OverDrive's, unless `--goodreads`) |
-| `--goodreads`, `--gr` | show Goodreads rating + #ratings instead of the stale OverDrive star; cached in `~/.cache/libbynf` |
+| `--min-rating` | drop titles below this star rating (always OverDrive's — filtered before the Goodreads lookup) |
+| `--no-goodreads`, `--no-gr` | skip the Goodreads lookup (faster / offline); show OverDrive's own star |
 | `-l, --library` | library key, repeatable |
 | `--scan-pages` | max pages to scan per library (default 25) |
 | `--timeout` | max seconds to scan per library (default 20) |
@@ -84,12 +84,13 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 - Inside **tmux** (which strips OSC 8) the link is shown as the visible URL
   instead, so the terminal's own URL matcher keeps it clickable (Cmd+click in
   Ghostty).
-- **Ratings**: the default `★` is OverDrive's own patron rating, which is
-  unmaintained — new titles usually have none. `--goodreads` swaps in Goodreads'
-  rating + rating count (the `(1.4M)` count is the tell it's Goodreads). Goodreads
-  retired its API, so this queries its public title-autocomplete endpoint and
-  validates the returned title+author before trusting a rating — a fuzzy match
-  can't attach the wrong book's number (it shows nothing instead). Opt-in: one
-  extra request per printed title, cached 30 days in `~/.cache/libbynf`.
+- **Ratings**: the `★` is **Goodreads' rating + rating count, by default** (the
+  `(1.4M)`-style count is the tell). Goodreads retired its API, so this queries
+  its public title-autocomplete endpoint and validates the returned title+author
+  before trusting a rating — a fuzzy match can't attach the wrong book's number
+  (it shows nothing instead). One request per printed title, cached 30 days in
+  `~/.cache/libbynf`. `--no-goodreads` skips it (offline, or to fall back to
+  OverDrive's own patron star — which is unmaintained and usually absent on new
+  titles).
 - Undocumented APIs — if OverDrive or Goodreads change them, the field names in
   `libbynf.py` are where to look.

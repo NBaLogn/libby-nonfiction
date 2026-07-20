@@ -430,9 +430,9 @@ def main():
     p.add_argument("--bio", action="store_true", help="keep biographies/memoirs (default: strip them)")
     p.add_argument("--adult", action="store_true", help="adult Nonfiction only (drop YA/juvenile)")
     p.add_argument("--min-rating", type=float, default=0.0, metavar="R")
-    p.add_argument("--goodreads", "--gr", action="store_true",
-                   help="show Goodreads rating + #ratings instead of the (stale) OverDrive "
-                        "star; queries Goodreads by title/author, cached in ~/.cache/libbynf")
+    p.add_argument("--no-goodreads", "--no-gr", dest="no_goodreads", action="store_true",
+                   help="skip the Goodreads lookup (faster / works offline); show OverDrive's own "
+                        "star instead. Goodreads is queried by default, cached in ~/.cache/libbynf")
     p.add_argument("--per-page", type=int, default=100)
     p.add_argument("--scan-pages", type=int, default=25, help="max pages to scan per library")
     p.add_argument("--timeout", type=float, default=20.0, metavar="SEC",
@@ -460,7 +460,7 @@ def main():
         return
 
     recs = collect(args, genres)
-    if args.goodreads:
+    if not args.no_goodreads:
         enrich_goodreads(recs)
     if args.json:
         items = [{**r["item"], "goodreads": r["gr"]} if r.get("gr") else r["item"] for r in recs]
