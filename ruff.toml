@@ -1,27 +1,16 @@
-# libbynf is one small, dependency-free stdlib CLI. Keep the repo-wide
-# "select = ALL" spirit, but drop the rule families that only make sense for
-# larger typed libraries or a pytest suite.
+# Local ruff config for this single-file stdlib CLI. Keeps the global
+# `select = ALL`, ignoring only rules that are a formatter conflict, inapplicable
+# to an assert-based self-test, or already disabled in the global config. Every
+# other finding is fixed in the code, not silenced.
 [lint]
 select = ["ALL"]
 ignore = [
-    "E501",    # line length — long help text and URLs
-    "ERA001",  # commented-out code
-    "T20",     # print() — this IS a CLI; printing is the output
-    "ANN",     # type annotations on every function/arg
-    "D",       # docstrings on every public symbol
-    "S101",    # asserts — the built-in --selftest is assert-based by design
-    "S310",    # urlopen(http/https) — the tool's whole job is fetching public APIs
-    "S110",    # try/except/pass — deliberate best-effort cache write
-    "BLE001",  # blind `except Exception` — intentional graceful degradation
-    "COM812",  # trailing comma — conflicts with the formatter
-    "ISC001",  # implicit string concat — conflicts with the formatter
-    "PT018",   # not a pytest suite
-    "FBT",     # boolean flags are fine for a CLI
-    "EM",      # exception-message string style
-    "TRY003",  # long exception messages
-    "PLR2004", # "magic" numbers (wait-day thresholds, 1_000_000)
-    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "C901",  # main()/collect() size
-    "SIM103",  # keep()'s guard-clause style reads better than a negated return
+    "E501",    # line length — disabled globally (long URLs / help text)
+    "ERA001",  # commented-out code — disabled globally
+    "T20",     # print() — disabled globally; this is a CLI, output is the point
+    "COM812",  # trailing comma — conflicts with the ruff formatter
+    "ISC001",  # implicit string concat — conflicts with the ruff formatter
+    "S101",    # assert — the built-in --selftest is assert-based by design
 ]
 
 [lint.pydocstyle]
