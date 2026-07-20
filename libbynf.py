@@ -61,7 +61,10 @@ class Query(NamedTuple):
 THUNDER = "https://thunder.api.overdrive.com/v2/libraries/{key}/media"
 UA = "libbynf/1.1 (+personal library browser)"
 # Goodreads retired its public API (2020); we query its title-autocomplete endpoint.
-UA_BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+UA_BROWSER = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 GR_CACHE = Path.home() / ".cache" / "libbynf" / "goodreads.json"
 GR_TTL = 30 * 86400  # ratings drift slowly; refresh monthly
 GR_MAX_WORKERS = 8
@@ -294,14 +297,16 @@ def _gr_pick(
 
 
 def _gr_lookup(key: tuple[str, str]) -> dict[str, Any] | None:
-    """Query Goodreads' title-autocomplete (no API key needed) and validate the match."""
+    """Query Goodreads' title-autocomplete and return the validated match."""
     title, author = key
     url = (
         "https://www.goodreads.com/book/auto_complete?format=json&q="
         + urllib.parse.quote(title)
     )
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})  # noqa: S310  # hardcoded https
+        req = urllib.request.Request(  # noqa: S310  # hardcoded https
+            url, headers={"User-Agent": UA_BROWSER}
+        )
         with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
             data = json.load(r)
     except (OSError, ValueError):  # network error or non-JSON body
@@ -367,7 +372,7 @@ def keep(item: Item, args: argparse.Namespace, genres: list[str]) -> bool:
 def _pages(
     key: str, args: argparse.Namespace, q: Query
 ) -> Iterator[tuple[int, list[Item], int]]:
-    """Yield (page, items, total) for one library until a cap, error, or end stops it."""
+    """Yield (page, items, total) per page until a cap, error, or empty stops it."""
     start = time.monotonic()
     for page in range(1, args.scan_pages + 1):
         if time.monotonic() - start > args.timeout:
@@ -425,11 +430,12 @@ def list_genres(args: argparse.Namespace) -> None:
     )
     subs = data.get("facets", {}).get("subjects", {}).get("items", [])
     if not subs:
-        print("no genre facet returned")
+        sys.stdout.write("no genre facet returned\n")
         return
     for s in subs:
-        print(
-            f"{s.get('totalItemsText', ''):>9}  [{s.get('id', '')}] {s.get('name', '')}"
+        sys.stdout.write(
+            f"{s.get('totalItemsText', ''):>9}  "
+            f"[{s.get('id', '')}] {s.get('name', '')}\n"
         )
 
 
@@ -501,8 +507,14 @@ def render(rec: Record, idx: int, width: int) -> str:
     return "\n".join(lines)
 
 
+def _expect(ok: object, label: str) -> None:
+    """Raise AssertionError(label) when ok is falsy (self-test check)."""
+    if not ok:
+        raise AssertionError(label)
+
+
 def selftest() -> None:
-    """Assert the pure filter/format helpers behave, then print 'selftest ok'."""
+    """Check the pure filter/format helpers behave, then write 'selftest ok'."""
     stanley = {
         "subjects": [
             {"id": "36", "name": "History"},
@@ -516,9 +528,7 @@ def selftest() -> None:
             {"id": "128", "name": "Young Adult Nonfiction"},
         ],
         "bisac": [
-            {
-                "description": "Young Adult Nonfiction / Biography & Autobiography / General"
-            }
+            {"description": "Young Adult Nonfiction / Biography & Autobiography"}
         ],
     }
     memoir = {
@@ -530,19 +540,19 @@ def selftest() -> None:
         "bisac": [],
     }
 
-    assert is_nonfiction(stanley, adult=False)  # keep
-    assert not is_biography(stanley)
-    assert is_biography(cassidy)  # drop (subject 7)
-    assert is_nonfiction(cassidy, adult=False)  # YA nonfiction...
-    assert not is_nonfiction(cassidy, adult=True)  # ...but not adult
-    assert is_biography(memoir)  # drop (BISAC memoir)
-    assert not is_nonfiction(fiction, adult=False)  # drop (fiction)
-    assert matches_genres(stanley, ["history"])
-    assert not matches_genres(stanley, ["science"])
-    assert matches_genres(fiction, ["romance"])  # genre substring match
-    assert human(1392620) == "1.4M"
-    assert human(2506) == "2k"
-    assert human(15) == "15"
+    _expect(is_nonfiction(stanley, adult=False), "stanley is nonfiction")
+    _expect(not is_biography(stanley), "stanley not a biography")
+    _expect(is_biography(cassidy), "cassidy dropped (subject 7)")
+    _expect(is_nonfiction(cassidy, adult=False), "cassidy is YA nonfiction")
+    _expect(not is_nonfiction(cassidy, adult=True), "cassidy not adult nonfiction")
+    _expect(is_biography(memoir), "memoir dropped (BISAC)")
+    _expect(not is_nonfiction(fiction, adult=False), "fiction dropped")
+    _expect(matches_genres(stanley, ["history"]), "stanley matches history")
+    _expect(not matches_genres(stanley, ["science"]), "stanley not science")
+    _expect(matches_genres(fiction, ["romance"]), "fiction matches romance")
+    _expect(human(1392620) == "1.4M", "human 1.4M")
+    _expect(human(2506) == "2k", "human 2k")
+    _expect(human(15) == "15", "human 15")
 
     gr_cands = [
         {
@@ -561,8 +571,8 @@ def selftest() -> None:
     gr_hit = _gr_pick(
         "Human Raised", "Dana Suskind", gr_cands
     )  # picks 2nd, not fuzzy 1st
-    assert gr_hit is not None
-    assert gr_hit["rating"] == float(gr_cands[1]["avgRating"])
+    _expect(gr_hit is not None, "gr_hit found")
+    _expect(gr_hit and gr_hit["rating"] == float(gr_cands[1]["avgRating"]), "gr rating")
     wrong = _gr_pick(
         "The Industrial Revolution",
         "Robert Allen",
@@ -574,24 +584,20 @@ def selftest() -> None:
             }
         ],
     )
-    assert wrong is None
+    _expect(wrong is None, "wrong match rejected")
 
     facet = [
         {"id": "36", "name": "History"},
         {"id": "115", "name": "Historical Fiction"},
         {"id": "26", "name": "Fiction"},
     ]
-    assert resolve_genres(["history"], facet) == (["36"], [])  # unique substring
-    assert resolve_genres(["fiction"], facet) == (
-        ["26"],
-        [],
-    )  # exact beats Historical Fiction
-    assert resolve_genres(["histor"], facet) == ([], ["histor"])  # ambiguous -> client
-    assert resolve_genres(["kayaking"], facet) == (
-        [],
-        ["kayaking"],
-    )  # unknown -> client
-    print("selftest ok")
+    _expect(resolve_genres(["history"], facet) == (["36"], []), "history server id")
+    _expect(resolve_genres(["fiction"], facet) == (["26"], []), "fiction exact id")
+    _expect(resolve_genres(["histor"], facet) == ([], ["histor"]), "histor ambiguous")
+    _expect(
+        resolve_genres(["kayaking"], facet) == ([], ["kayaking"]), "kayaking unknown"
+    )
+    sys.stdout.write("selftest ok\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -613,7 +619,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--genre",
         action="append",
         metavar="NAME",
-        help="require this genre/subject (repeatable, AND; substring match). See --genres",
+        help="require this genre/subject (repeatable, AND; substring match). "
+        "See --genres",
     )
     p.add_argument(
         "-l",
@@ -677,7 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _resolve_genre_filter(
     args: argparse.Namespace, genres: list[str]
 ) -> tuple[list[str], list[str]]:
-    """Map genres to server-side subject ids where unambiguous; note the split on stderr."""
+    """Map genres to server-side subject ids where unique; log the split."""
     if not genres:
         return [], genres
     facet = fetch_subject_facet(args.library[0], args.type)
@@ -688,7 +695,8 @@ def _resolve_genre_filter(
         )
     if client:
         sys.stderr.write(
-            f"… client-side scan for genre(s): {', '.join(client)} (ambiguous/unknown name)\n"
+            f"… client-side scan for genre(s): {', '.join(client)} "
+            "(ambiguous/unknown name)\n"
         )
     return subjects, client
 
@@ -703,12 +711,14 @@ def _emit(recs: list[Record], args: argparse.Namespace) -> None:
         json.dump(items, sys.stdout, indent=2, ensure_ascii=False)
         return
     if not recs:
-        print(
-            "no matching titles (try --all-genres, drop -g/--available, or widen --query)"
+        sys.stdout.write(
+            "no matching titles "
+            "(try --all-genres, drop -g/--available, or widen --query)\n"
         )
         return
     width = len(str(len(recs)))
-    print("\n\n".join(render(rec, i, width) for i, rec in enumerate(recs, 1)))
+    body = "\n\n".join(render(rec, i, width) for i, rec in enumerate(recs, 1))
+    sys.stdout.write(body + "\n")
 
 
 def main() -> None:
@@ -723,7 +733,7 @@ def main() -> None:
     if not args.library:
         args.library = list(DEFAULT_LIBS)
     if args.type == ["magazine"]:
-        # magazines aren't fiction/nonfiction and carry no bio tags; those gates don't apply
+        # magazines aren't fiction/nonfiction and carry no bio tags; gates don't apply
         args.all_genres = True
         args.bio = True
     if args.genres:

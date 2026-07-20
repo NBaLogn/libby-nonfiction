@@ -1,16 +1,15 @@
 # Local ruff config for this single-file stdlib CLI. Keeps the global
-# `select = ALL`, ignoring only rules that are a formatter conflict, inapplicable
-# to an assert-based self-test, or already disabled in the global config. Every
-# other finding is fixed in the code, not silenced.
+# `select = ALL`, ignoring only the two rules ruff itself says conflict with its
+# formatter. Everything else is fixed in the code, not silenced; the assert-based
+# --selftest carries per-line `# noqa: S101`, and the stdlib urlopen calls carry
+# per-line `# noqa: S310` (hardcoded-https, audited).
+line-length = 88
+
 [lint]
 select = ["ALL"]
 ignore = [
-    "E501",    # line length — disabled globally (long URLs / help text)
-    "ERA001",  # commented-out code — disabled globally
-    "T20",     # print() — disabled globally; this is a CLI, output is the point
     "COM812",  # trailing comma — conflicts with the ruff formatter
     "ISC001",  # implicit string concat — conflicts with the ruff formatter
-    "S101",    # assert — the built-in --selftest is assert-based by design
 ]
 
 [lint.pydocstyle]
