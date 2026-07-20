@@ -66,7 +66,11 @@ def paint(s, code):
 
 def hyperlink(label, url):
     # OSC 8 terminal hyperlink (Ghostty/iTerm/WezTerm/kitty); raw URL when piped.
-    return f"\x1b]8;;{url}\x1b\\{label}\x1b]8;;\x1b\\" if TTY else url
+    # tmux strips OSC 8, leaving an unclickable label, so inside tmux show the
+    # visible URL instead (the terminal's own URL matcher makes it clickable).
+    if not TTY or os.environ.get("TMUX"):
+        return url
+    return f"\x1b]8;;{url}\x1b\\{label}\x1b]8;;\x1b\\"
 
 
 def wait_code(item):

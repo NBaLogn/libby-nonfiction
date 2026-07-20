@@ -79,5 +79,8 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 - In a terminal the output is colored and the `↗ open in Libby` label is a
   clickable OSC 8 hyperlink; wait times are green/yellow/red by length. Piping
   the output or setting `NO_COLOR=1` falls back to plain text with raw URLs.
+- Inside **tmux** (which strips OSC 8) the link is shown as the visible URL
+  instead, so the terminal's own URL matcher keeps it clickable (Cmd+click in
+  Ghostty).
 - Undocumented API — if OverDrive changes it, the field names in `libbynf.py`
   are where to look.
