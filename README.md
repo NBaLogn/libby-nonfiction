@@ -48,8 +48,8 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 | flag | effect |
 |------|--------|
 | `-t, --type` | `audiobook` (default), `ebook`/`book`, `magazine`; repeatable |
-| `-g, --genre` | require this genre/subject (repeatable, **AND**, substring match) |
-| `--genres` | list the genre names available in this catalog, then exit |
+| `-g, --genre` | require this genre/subject (repeatable, **AND**); resolved server-side when the name maps to one subject, else client-side |
+| `--genres` | list the catalog's genre names + ids, then exit |
 | `-q, --query` | keyword search (title/author/subject); omit to browse all |
 | `--sort` | `newest` (default), `popular`, `relevance`, `released`, `title`, `author` |
 | `-n, --max` | max titles to print (default 50) |
@@ -67,9 +67,14 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 ## Notes
 
 - **Genres are AND**: `-g history -g science` returns only titles tagged both.
-  Run twice for an either/or. Narrow intersections may hit the `--timeout` cap
-  (a `hit 20s scan cap` note on stderr) — raise `--timeout`/`--scan-pages` to
-  dig deeper.
+  Run twice for an either/or.
+- **Genre resolution**: a `-g` name that maps to exactly one subject is filtered
+  **server-side** (`subject=<id>`) — fast, and `-n` returns the full count instead
+  of whatever survived a page-capped scan. A name that's ambiguous (matches
+  several subjects, e.g. `histor` → History + Historical Fiction) or unknown falls
+  back to the slower client-side scan; a stderr note says which. Use `--genres`
+  to see exact names, and quote multi-word ones (`-g "true crime"`). The
+  nonfiction gate and biography-stripping still run either way.
 - **Magazines** carry no fiction/nonfiction or bio tags, so `-t magazine` alone
   auto-drops the nonfiction gate and bio-strip. Genre flags still apply
   (`-t magazine -g "food & wine"`).

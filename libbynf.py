@@ -24,6 +24,7 @@ biographies/memoirs by default, and optionally narrow to specific genres.
   uv run libbynf.py --json > out.json        # raw filtered records
   uv run libbynf.py --selftest               # filter self-check
 """
+
 import argparse
 import json
 import os
@@ -45,8 +46,13 @@ DEFAULT_LIBS = ["toronto", "mississauga"]
 LIB_TAG = {"toronto": "TPL", "mississauga": "MIS"}
 
 MEDIA = {"audiobook", "ebook", "magazine"}
-TYPE_ALIASES = {"book": "ebook", "books": "ebook", "audiobooks": "audiobook",
-                "ebooks": "ebook", "magazines": "magazine"}
+TYPE_ALIASES = {
+    "book": "ebook",
+    "books": "ebook",
+    "audiobooks": "audiobook",
+    "ebooks": "ebook",
+    "magazines": "magazine",
+}
 
 # Thunder sortBy values, mapped to friendly names.
 SORTS = {
@@ -58,7 +64,7 @@ SORTS = {
     "author": "author",
 }
 
-BIO_SUBJECT_ID = "7"         # "Biography & Autobiography"
+BIO_SUBJECT_ID = "7"  # "Biography & Autobiography"
 NONFICTION_ADULT_ID = "111"  # "Nonfiction" (adult bucket)
 
 # Color/links only when writing to a real terminal (keeps pipes and --json clean).
@@ -82,12 +88,12 @@ def hyperlink(label, url):
 def wait_code(item):
     d = item.get("estimatedWaitDays")
     if d is None:
-        return "2"       # dim
+        return "2"  # dim
     if d <= 30:
-        return "32"      # green
+        return "32"  # green
     if d <= 120:
-        return "33"      # yellow
-    return "31"          # red
+        return "33"  # yellow
+    return "31"  # red
 
 
 def human(n):
@@ -101,23 +107,54 @@ def human(n):
 def media_type(s):
     v = TYPE_ALIASES.get(s.lower(), s.lower())
     if v not in MEDIA:
-        raise argparse.ArgumentTypeError(f"type must be audiobook, ebook/book, or magazine (got '{s}')")
+        raise argparse.ArgumentTypeError(
+            f"type must be audiobook, ebook/book, or magazine (got '{s}')"
+        )
     return v
 
 
-def fetch(key, query, types, sort, page, per_page):
-    params = {
-        "mediaTypes": ",".join(types),
-        "sortBy": SORTS[sort],
-        "perPage": per_page,
-        "page": page,
-    }
+def fetch(key, query, types, sort, page, per_page, subjects=()):
+    params = [
+        ("mediaTypes", ",".join(types)),
+        ("sortBy", SORTS[sort]),
+        ("perPage", per_page),
+        ("page", page),
+    ]
     if query:
-        params["query"] = query
+        params.append(("query", query))
+    params += [("subject", s) for s in subjects]  # server-side genre filter (repeated = AND)
     url = THUNDER.format(key=key) + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": UA, "Accept": "application/json"}
+    )
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
+
+
+def fetch_subject_facet(key, types):
+    """Catalog-wide subject facet for these media types: [{id, name, totalItems}, ...]."""
+    data = fetch(key, "", types, "relevance", 1, 1)
+    return data.get("facets", {}).get("subjects", {}).get("items", [])
+
+
+def resolve_genres(genres, facet):
+    """Split requested genres into (server-side subject ids, client-side names).
+
+    A genre maps to a server-side id only when it hits exactly one subject (exact
+    name wins, else a unique substring). Ambiguous (several subjects, no exact) or
+    unknown genres fall back to the client-side name filter — nothing is lost, it
+    just isn't sped up. Server ids are AND-ed by Thunder, matching -g's AND.
+    """
+    server_ids, client = [], []
+    for g in genres:
+        matches = [s for s in facet if g in (s.get("name") or "").lower()]
+        exact = [s for s in matches if (s.get("name") or "").lower() == g]
+        chosen = exact or matches
+        if len(chosen) == 1:
+            server_ids.append(chosen[0]["id"])
+        else:
+            client.append(g)  # 0 = unknown, >1 = ambiguous
+    return server_ids, client
 
 
 def is_biography(item):
@@ -159,7 +196,9 @@ def available_now(item):
 
 
 def narrators(item):
-    return [c.get("name") for c in item.get("creators", []) if c.get("role") == "Narrator"]
+    return [
+        c.get("name") for c in item.get("creators", []) if c.get("role") == "Narrator"
+    ]
 
 
 def title_key(item):
@@ -209,10 +248,14 @@ def _gr_pick(title, author, candidates):
 def _gr_lookup(key):
     """Query Goodreads' title-autocomplete (no API key needed) and validate the match."""
     title, author = key
-    url = "https://www.goodreads.com/book/auto_complete?format=json&q=" + urllib.parse.quote(title)
+    url = (
+        "https://www.goodreads.com/book/auto_complete?format=json&q="
+        + urllib.parse.quote(title)
+    )
     try:
         with urllib.request.urlopen(
-                urllib.request.Request(url, headers={"User-Agent": UA_BROWSER}), timeout=15) as r:
+            urllib.request.Request(url, headers={"User-Agent": UA_BROWSER}), timeout=15
+        ) as r:
             data = json.load(r)
     except Exception:
         return None
@@ -232,10 +275,16 @@ def enrich_goodreads(recs):
     except Exception:
         cache = {}
     now = time.time()
-    keys = [(r["item"].get("title") or "", r["item"].get("firstCreatorName") or "") for r in recs]
+    keys = [
+        (r["item"].get("title") or "", r["item"].get("firstCreatorName") or "")
+        for r in recs
+    ]
 
-    stale = {_gr_key(*k): k for k in keys
-             if now - cache.get(_gr_key(*k), {}).get("t", 0) > GR_TTL}
+    stale = {
+        _gr_key(*k): k
+        for k in keys
+        if now - cache.get(_gr_key(*k), {}).get("t", 0) > GR_TTL
+    }
     if stale:
         sys.stderr.write(f"… fetching {len(stale)} Goodreads ratings\n")
         ckeys, tuples = list(stale), list(stale.values())
@@ -271,19 +320,21 @@ def keep(item, args, genres):
     return True
 
 
-def collect(args, genres):
+def collect(args, genres, subjects):
     """Page each library, filter, and merge by (title, author) across libraries."""
     merged = {}  # title_key -> record
-    order = []   # preserves first-seen (API sort) order
+    order = []  # preserves first-seen (API sort) order
     for key in args.library:
         seen_here = 0
         start = time.monotonic()
         for page in range(1, args.scan_pages + 1):
             if time.monotonic() - start > args.timeout:
-                sys.stderr.write(f"! {key}: hit {args.timeout:g}s scan cap at page {page}\n")
+                sys.stderr.write(
+                    f"! {key}: hit {args.timeout:g}s scan cap at page {page}\n"
+                )
                 break
             try:
-                data = fetch(key, args.query, args.type, args.sort, page, args.per_page)
+                data = fetch(key, args.query, args.type, args.sort, page, args.per_page, subjects)
             except urllib.error.HTTPError as e:
                 sys.stderr.write(f"! {key} p{page}: HTTP {e.code}\n")
                 break
@@ -323,7 +374,7 @@ def list_genres(args):
         print("no genre facet returned")
         return
     for s in subs:
-        print(f"{s.get('totalItemsText', ''):>9}  {s.get('name', '')}")
+        print(f"{s.get('totalItemsText', ''):>9}  [{s.get('id', '')}] {s.get('name', '')}")
 
 
 def best_lib(copies):
@@ -331,11 +382,13 @@ def best_lib(copies):
 
     Wait, not hold count: more copies can mean a shorter wait despite more holds.
     """
+
     def rank(l):
         it = copies[l]
         if available_now(it):
             return (0, 0)
-        return (1, it.get("estimatedWaitDays") or 10 ** 9)
+        return (1, it.get("estimatedWaitDays") or 10**9)
+
     return min(copies, key=rank)
 
 
@@ -374,8 +427,11 @@ def render(rec, idx, width):
         meta.append(paint(str(it["duration"]), "2"))
     lines.append(pad + " · ".join(meta))
 
-    names = [s.get("name") for s in it.get("subjects", [])
-             if s.get("name") and s.get("name") != "Nonfiction"]
+    names = [
+        s.get("name")
+        for s in it.get("subjects", [])
+        if s.get("name") and s.get("name") != "Nonfiction"
+    ]
     if names:
         lines.append(pad + paint(" · ".join(names), "2"))
 
@@ -387,59 +443,163 @@ def render(rec, idx, width):
 
 
 def selftest():
-    stanley = {"subjects": [{"id": "36", "name": "History"}, {"id": "111", "name": "Nonfiction"}],
-               "bisac": [{"description": "History / Essays"}]}
-    cassidy = {"subjects": [{"id": "7", "name": "Biography & Autobiography"},
-                            {"id": "128", "name": "Young Adult Nonfiction"}],
-               "bisac": [{"description": "Young Adult Nonfiction / Biography & Autobiography / General"}]}
-    memoir = {"subjects": [{"id": "111", "name": "Nonfiction"}],
-              "bisac": [{"description": "BIOGRAPHY & AUTOBIOGRAPHY / Memoirs"}]}
-    fiction = {"subjects": [{"id": "26", "name": "Fiction"}, {"id": "77", "name": "Romance"}], "bisac": []}
+    stanley = {
+        "subjects": [
+            {"id": "36", "name": "History"},
+            {"id": "111", "name": "Nonfiction"},
+        ],
+        "bisac": [{"description": "History / Essays"}],
+    }
+    cassidy = {
+        "subjects": [
+            {"id": "7", "name": "Biography & Autobiography"},
+            {"id": "128", "name": "Young Adult Nonfiction"},
+        ],
+        "bisac": [
+            {
+                "description": "Young Adult Nonfiction / Biography & Autobiography / General"
+            }
+        ],
+    }
+    memoir = {
+        "subjects": [{"id": "111", "name": "Nonfiction"}],
+        "bisac": [{"description": "BIOGRAPHY & AUTOBIOGRAPHY / Memoirs"}],
+    }
+    fiction = {
+        "subjects": [{"id": "26", "name": "Fiction"}, {"id": "77", "name": "Romance"}],
+        "bisac": [],
+    }
 
-    assert is_nonfiction(stanley, False) and not is_biography(stanley)   # keep
-    assert is_biography(cassidy)                                          # drop (subject 7)
-    assert is_nonfiction(cassidy, False) and not is_nonfiction(cassidy, True)  # YA nonfic, not adult
-    assert is_biography(memoir)                                           # drop (BISAC memoir)
-    assert not is_nonfiction(fiction, False)                             # drop (fiction)
-    assert matches_genres(stanley, ["history"]) and not matches_genres(stanley, ["science"])
-    assert matches_genres(fiction, ["romance"])                          # genre substring match
+    assert is_nonfiction(stanley, False) and not is_biography(stanley)  # keep
+    assert is_biography(cassidy)  # drop (subject 7)
+    assert is_nonfiction(cassidy, False) and not is_nonfiction(
+        cassidy, True
+    )  # YA nonfic, not adult
+    assert is_biography(memoir)  # drop (BISAC memoir)
+    assert not is_nonfiction(fiction, False)  # drop (fiction)
+    assert matches_genres(stanley, ["history"]) and not matches_genres(
+        stanley, ["science"]
+    )
+    assert matches_genres(fiction, ["romance"])  # genre substring match
     assert human(1392620) == "1.4M" and human(2506) == "2k" and human(15) == "15"
-    gr_cands = [{"title": "Raising Human Beings", "author": {"name": "Ross Greene"}, "avgRating": "4.2", "ratingsCount": 2376},
-                {"title": "Human Raised: Nurturing Connection", "author": {"name": "Dana Suskind"}, "avgRating": "4.67", "ratingsCount": 12}]
-    gr_hit = _gr_pick("Human Raised", "Dana Suskind", gr_cands)                   # picks 2nd, not fuzzy 1st
+    gr_cands = [
+        {
+            "title": "Raising Human Beings",
+            "author": {"name": "Ross Greene"},
+            "avgRating": "4.2",
+            "ratingsCount": 2376,
+        },
+        {
+            "title": "Human Raised: Nurturing Connection",
+            "author": {"name": "Dana Suskind"},
+            "avgRating": "4.67",
+            "ratingsCount": 12,
+        },
+    ]
+    gr_hit = _gr_pick(
+        "Human Raised", "Dana Suskind", gr_cands
+    )  # picks 2nd, not fuzzy 1st
     assert gr_hit and gr_hit["rating"] == 4.67
-    assert _gr_pick("The Industrial Revolution", "Robert Allen",
-                    [{"title": "The Fourth Industrial Revolution", "author": {"name": "Klaus Schwab"}, "avgRating": "3.56"}]) is None
+    assert (
+        _gr_pick(
+            "The Industrial Revolution",
+            "Robert Allen",
+            [
+                {
+                    "title": "The Fourth Industrial Revolution",
+                    "author": {"name": "Klaus Schwab"},
+                    "avgRating": "3.56",
+                }
+            ],
+        )
+        is None
+    )
+
+    facet = [{"id": "36", "name": "History"}, {"id": "115", "name": "Historical Fiction"},
+             {"id": "26", "name": "Fiction"}]
+    assert resolve_genres(["history"], facet) == (["36"], [])          # unique substring
+    assert resolve_genres(["fiction"], facet) == (["26"], [])          # exact beats Historical Fiction
+    assert resolve_genres(["histor"], facet) == ([], ["histor"])       # ambiguous -> client-side
+    assert resolve_genres(["kayaking"], facet) == ([], ["kayaking"])   # unknown -> client-side
     print("selftest ok")
 
 
 def main():
-    p = argparse.ArgumentParser(description="Browse a Libby catalog, biographies stripped by default.")
+    p = argparse.ArgumentParser(
+        description="Browse a Libby catalog, biographies stripped by default."
+    )
     p.add_argument("-q", "--query", default="", help="keyword search (optional)")
-    p.add_argument("-t", "--type", action="append", type=media_type, metavar="KIND",
-                   help="audiobook (default), ebook/book, magazine; repeatable")
-    p.add_argument("-g", "--genre", action="append", metavar="NAME",
-                   help="require this genre/subject (repeatable, AND; substring match). See --genres")
-    p.add_argument("-l", "--library", action="append", metavar="KEY",
-                   help="library key (repeatable); default: toronto, mississauga")
-    p.add_argument("--sort", choices=SORTS, default="newest")
+    p.add_argument(
+        "-t",
+        "--type",
+        action="append",
+        type=media_type,
+        metavar="KIND",
+        help="audiobook (default), ebook/book, magazine; repeatable",
+    )
+    p.add_argument(
+        "-g",
+        "--genre",
+        action="append",
+        metavar="NAME",
+        help="require this genre/subject (repeatable, AND; substring match). See --genres",
+    )
+    p.add_argument(
+        "-l",
+        "--library",
+        action="append",
+        metavar="KEY",
+        help="library key (repeatable); default: toronto, mississauga",
+    )
+    p.add_argument("--sort", choices=SORTS, default="popular")
     p.add_argument("-n", "--max", type=int, default=50, help="max titles to print")
-    p.add_argument("-a", "--available", action="store_true", help="only titles available now")
-    p.add_argument("--all-genres", action="store_true",
-                   help="don't require the Nonfiction subject (browse fiction too)")
-    p.add_argument("--bio", action="store_true", help="keep biographies/memoirs (default: strip them)")
-    p.add_argument("--adult", action="store_true", help="adult Nonfiction only (drop YA/juvenile)")
+    p.add_argument(
+        "-a", "--available", action="store_true", help="only titles available now"
+    )
+    p.add_argument(
+        "--all-genres",
+        action="store_true",
+        help="don't require the Nonfiction subject (browse fiction too)",
+    )
+    p.add_argument(
+        "--bio",
+        action="store_true",
+        help="keep biographies/memoirs (default: strip them)",
+    )
+    p.add_argument(
+        "--adult", action="store_true", help="adult Nonfiction only (drop YA/juvenile)"
+    )
     p.add_argument("--min-rating", type=float, default=0.0, metavar="R")
-    p.add_argument("--no-goodreads", "--no-gr", dest="no_goodreads", action="store_true",
-                   help="skip the Goodreads lookup (faster / works offline); show OverDrive's own "
-                        "star instead. Goodreads is queried by default, cached in ~/.cache/libbynf")
+    p.add_argument(
+        "--no-goodreads",
+        "--no-gr",
+        dest="no_goodreads",
+        action="store_true",
+        help="skip the Goodreads lookup (faster / works offline); show OverDrive's own "
+        "star instead. Goodreads is queried by default, cached in ~/.cache/libbynf",
+    )
     p.add_argument("--per-page", type=int, default=100)
-    p.add_argument("--scan-pages", type=int, default=25, help="max pages to scan per library")
-    p.add_argument("--timeout", type=float, default=20.0, metavar="SEC",
-                   help="max seconds to scan per library (guards over-narrow filters)")
-    p.add_argument("--genres", action="store_true", help="list the genre names this catalog uses, then exit")
-    p.add_argument("--json", action="store_true", help="emit raw filtered items as JSON")
-    p.add_argument("--selftest", action="store_true", help="run filter self-check and exit")
+    p.add_argument(
+        "--scan-pages", type=int, default=25, help="max pages to scan per library"
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=20.0,
+        metavar="SEC",
+        help="max seconds to scan per library (guards over-narrow filters)",
+    )
+    p.add_argument(
+        "--genres",
+        action="store_true",
+        help="list the genre names this catalog uses, then exit",
+    )
+    p.add_argument(
+        "--json", action="store_true", help="emit raw filtered items as JSON"
+    )
+    p.add_argument(
+        "--selftest", action="store_true", help="run filter self-check and exit"
+    )
     args = p.parse_args()
 
     if args.selftest:
@@ -459,11 +619,23 @@ def main():
         list_genres(args)
         return
 
-    recs = collect(args, genres)
+    subjects = []
+    if genres:
+        facet = fetch_subject_facet(args.library[0], args.type)
+        subjects, genres = resolve_genres(genres, facet)
+        if subjects:
+            sys.stderr.write(f"… genre filtered server-side (subject={','.join(map(str, subjects))})\n")
+        if genres:
+            sys.stderr.write(f"… client-side scan for genre(s): {', '.join(genres)} (ambiguous/unknown name)\n")
+
+    recs = collect(args, genres, subjects)
     if not args.no_goodreads:
         enrich_goodreads(recs)
     if args.json:
-        items = [{**r["item"], "goodreads": r["gr"]} if r.get("gr") else r["item"] for r in recs]
+        items = [
+            {**r["item"], "goodreads": r["gr"]} if r.get("gr") else r["item"]
+            for r in recs
+        ]
         json.dump(items, sys.stdout, indent=2, ensure_ascii=False)
         return
     if not recs:
