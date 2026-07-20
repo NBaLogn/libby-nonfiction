@@ -174,18 +174,9 @@ def collect(args, genres):
                     continue
                 k = title_key(it)
                 if k in merged:
-                    rec = merged[k]
-                    rec["libs"].add(key)
-                    if available_now(it) and not rec["available"]:
-                        rec["available"] = True
-                        rec["key"] = key  # link to a copy that's actually in
+                    merged[k]["copies"][key] = it  # same title, other library's queue
                 else:
-                    merged[k] = {
-                        "item": it,
-                        "libs": {key},
-                        "available": available_now(it),
-                        "key": key,
-                    }
+                    merged[k] = {"item": it, "copies": {key: it}}
                     order.append(k)
                     seen_here += 1
             if page * args.per_page >= total:
@@ -210,12 +201,28 @@ def list_genres(args):
         print(f"{s.get('totalItemsText', ''):>9}  {s.get('name', '')}")
 
 
-def libby_url(rec):
-    return f"https://libbyapp.com/library/{rec['key']}/media/{rec['item'].get('id')}"
+def status(item):
+    if available_now(item):
+        return "available"
+    return f"{item.get('holdsCount', 0)} holds/~{item.get('estimatedWaitDays', '?')}d"
+
+
+def best_lib(copies):
+    """Pick a library to link: an available copy first, else the shortest wait.
+
+    Wait, not hold count: more copies can mean a shorter wait despite more holds.
+    """
+    def rank(l):
+        it = copies[l]
+        if available_now(it):
+            return (0, 0)
+        return (1, it.get("estimatedWaitDays") or 10 ** 9)
+    return min(copies, key=rank)
 
 
 def fmt(rec):
     it = rec["item"]
+    copies = rec["copies"]
     title = it.get("title") or "(untitled)"
     author = it.get("firstCreatorName") or "?"
     bits = []
@@ -230,10 +237,10 @@ def fmt(rec):
     subs = ", ".join(n for n in names if n and n != "Nonfiction")
     if subs:
         bits.append(subs)
-    tags = "·".join(sorted(str(LIB_TAG.get(l, l)) for l in rec["libs"]))
-    avail = "available" if rec["available"] else (
-        f"{it.get('holdsCount', 0)} holds/~{it.get('estimatedWaitDays', '?')}d")
-    return f"{title} — {author}\n   {' · '.join(bits)}\n   [{tags}] {avail}   {libby_url(rec)}"
+    # per-library availability, so you know which queue to actually join
+    avail = " · ".join(f"{LIB_TAG.get(l, l)} {status(copies[l])}" for l in sorted(copies))
+    url = f"https://libbyapp.com/library/{best_lib(copies)}/media/{it.get('id')}"
+    return f"{title} — {author}\n   {' · '.join(bits)}\n   {avail}   {url}"
 
 
 def selftest():

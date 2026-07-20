@@ -37,9 +37,10 @@ uv run libbynf.py --selftest             # run the filter self-check
 ```
 
 Default libraries are Toronto (`toronto`) and Mississauga (`mississauga`);
-duplicates across both are merged and tagged `[MIS·TPL]`. Override with
-`-l KEY` (repeatable). A library key is the slug in its Libby URL —
-`libbyapp.com/library/<key>`.
+a title in both is merged into one row showing **each library's own hold queue**
+(`MIS 913 holds/~256d · TPL 4318 holds/~269d`), and the link points to whichever
+has the shortest wait. Override the libraries with `-l KEY` (repeatable). A
+library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 
 ## Flags
 
