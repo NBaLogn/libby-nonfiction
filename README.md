@@ -76,5 +76,8 @@ library key is the slug in its Libby URL — `libbyapp.com/library/<key>`.
 - Links are Libby title-card deep links (`libbyapp.com/search/<key>/search/page-1/<id>`),
   scoped to the shorter-wait library. (`/library/<key>/media/<id>` is *not* a real
   Libby route — it bounces to the library home.)
+- In a terminal the output is colored and the `↗ open in Libby` label is a
+  clickable OSC 8 hyperlink; wait times are green/yellow/red by length. Piping
+  the output or setting `NO_COLOR=1` falls back to plain text with raw URLs.
 - Undocumented API — if OverDrive changes it, the field names in `libbynf.py`
   are where to look.

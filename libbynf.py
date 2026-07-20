@@ -26,6 +26,7 @@ biographies/memoirs by default, and optionally narrow to specific genres.
 """
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -53,6 +54,30 @@ SORTS = {
 
 BIO_SUBJECT_ID = "7"         # "Biography & Autobiography"
 NONFICTION_ADULT_ID = "111"  # "Nonfiction" (adult bucket)
+
+# Color/links only when writing to a real terminal (keeps pipes and --json clean).
+TTY = sys.stdout.isatty()
+COLOR = TTY and "NO_COLOR" not in os.environ
+
+
+def paint(s, code):
+    return f"\x1b[{code}m{s}\x1b[0m" if COLOR else s
+
+
+def hyperlink(label, url):
+    # OSC 8 terminal hyperlink (Ghostty/iTerm/WezTerm/kitty); raw URL when piped.
+    return f"\x1b]8;;{url}\x1b\\{label}\x1b]8;;\x1b\\" if TTY else url
+
+
+def wait_code(item):
+    d = item.get("estimatedWaitDays")
+    if d is None:
+        return "2"       # dim
+    if d <= 30:
+        return "32"      # green
+    if d <= 120:
+        return "33"      # yellow
+    return "31"          # red
 
 
 def media_type(s):
@@ -201,12 +226,6 @@ def list_genres(args):
         print(f"{s.get('totalItemsText', ''):>9}  {s.get('name', '')}")
 
 
-def status(item):
-    if available_now(item):
-        return "available"
-    return f"{item.get('holdsCount', 0)} holds/~{item.get('estimatedWaitDays', '?')}d"
-
-
 def best_lib(copies):
     """Pick a library to link: an available copy first, else the shortest wait.
 
@@ -220,28 +239,44 @@ def best_lib(copies):
     return min(copies, key=rank)
 
 
-def fmt(rec):
-    it = rec["item"]
-    copies = rec["copies"]
-    title = it.get("title") or "(untitled)"
-    author = it.get("firstCreatorName") or "?"
-    bits = []
+def avail_chunk(lib, item):
+    """One library's availability, e.g. 'MIS 913 holds ~256d' (wait color-coded)."""
+    tag = paint(LIB_TAG.get(lib, lib), "1")
+    if available_now(item):
+        return f"{tag} {paint('available', '32')}"
+    holds = paint(f"{item.get('holdsCount', 0)} holds", "2")
+    wd = item.get("estimatedWaitDays")
+    wait = paint(f"~{wd}d" if wd else "~?d", wait_code(item))
+    return f"{tag} {holds} {wait}"
+
+
+def render(rec, idx, width):
+    it, copies = rec["item"], rec["copies"]
+    pad = " " * (width + 2)
+
+    num = paint(f"{idx:>{width}}.", "2")
+    title = paint(it.get("title") or "(untitled)", "1")
+    rating = "  " + paint(f"★{it['starRating']}", "33") if it.get("starRating") else ""
+    lines = [f"{num} {title}{rating}"]
+
+    meta = [it.get("firstCreatorName") or "?"]
     narr = narrators(it)
     if narr:
-        bits.append("narr. " + ", ".join(narr[:2]))
+        meta.append(paint("narr. " + ", ".join(narr[:2]), "2"))
     if it.get("duration"):
-        bits.append(str(it["duration"]))
-    if it.get("starRating"):
-        bits.append(f"★{it['starRating']}")
-    names = [s.get("name") for s in it.get("subjects", [])]
-    subs = ", ".join(n for n in names if n and n != "Nonfiction")
-    if subs:
-        bits.append(subs)
-    # per-library availability, so you know which queue to actually join
-    avail = " · ".join(f"{LIB_TAG.get(l, l)} {status(copies[l])}" for l in sorted(copies))
-    # Libby title-card deep link (SPA route); scoped to the shorter-wait library
+        meta.append(paint(str(it["duration"]), "2"))
+    lines.append(pad + " · ".join(meta))
+
+    names = [s.get("name") for s in it.get("subjects", [])
+             if s.get("name") and s.get("name") != "Nonfiction"]
+    if names:
+        lines.append(pad + paint(" · ".join(names), "2"))
+
+    lines.append(pad + "    ".join(avail_chunk(l, copies[l]) for l in sorted(copies)))
+
     url = f"https://libbyapp.com/search/{best_lib(copies)}/search/page-1/{it.get('id')}"
-    return f"{title} — {author}\n   {' · '.join(bits)}\n   {avail}   {url}"
+    lines.append(pad + paint(hyperlink("↗ open in Libby", url), "36"))
+    return "\n".join(lines)
 
 
 def selftest():
@@ -315,8 +350,8 @@ def main():
         hint = " (try --all-genres, drop -g/--available, or widen --query)"
         print("no matching titles" + hint)
         return
-    for i, rec in enumerate(recs, 1):
-        print(f"{i}. {fmt(rec)}")
+    width = len(str(len(recs)))
+    print("\n\n".join(render(rec, i, width) for i, rec in enumerate(recs, 1)))
 
 
 if __name__ == "__main__":
