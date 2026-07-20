@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from http.client import HTTPResponse
 
 Item = dict[str, Any]  # a Thunder media record
 Record = dict[str, Any]  # {item, copies: {lib: item}, gr?}
@@ -153,6 +154,15 @@ def media_type(s: str) -> str:
     return v
 
 
+def _urlopen(url: str, headers: dict[str, str], timeout: int) -> HTTPResponse:
+    """Open an http(s) URL, rejecting other schemes (the ruff S310 audit)."""
+    if not url.startswith(("http:", "https:")):
+        msg = f"refusing non-http(s) URL: {url}"
+        raise ValueError(msg)
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310  # scheme guarded
+    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310  # scheme guarded
+
+
 def fetch(key: str, q: Query, page: int) -> dict[str, Any]:
     """Fetch one page of a library's media catalog from the Thunder API."""
     params: list[tuple[str, Any]] = [
@@ -167,10 +177,8 @@ def fetch(key: str, q: Query, page: int) -> dict[str, Any]:
         ("subject", s) for s in q.subjects
     ]  # server-side genre filter (repeated = AND)
     url = THUNDER.format(key=key) + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(  # noqa: S310  # hardcoded https to the Thunder API
-        url, headers={"User-Agent": UA, "Accept": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    with _urlopen(url, headers, 30) as r:
         return json.load(r)
 
 
@@ -304,10 +312,7 @@ def _gr_lookup(key: tuple[str, str]) -> dict[str, Any] | None:
         + urllib.parse.quote(title)
     )
     try:
-        req = urllib.request.Request(  # noqa: S310  # hardcoded https
-            url, headers={"User-Agent": UA_BROWSER}
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
+        with _urlopen(url, {"User-Agent": UA_BROWSER}, 15) as r:
             data = json.load(r)
     except (OSError, ValueError):  # network error or non-JSON body
         return None
