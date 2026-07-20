@@ -35,12 +35,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 THUNDER = "https://thunder.api.overdrive.com/v2/libraries/{key}/media"
 UA = "libbynf/1.1 (+personal library browser)"
 # Goodreads retired its public API (2020); we query its title-autocomplete endpoint.
 UA_BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-GR_CACHE = os.path.expanduser("~/.cache/libbynf/goodreads.json")
+GR_CACHE = Path.home() / ".cache" / "libbynf" / "goodreads.json"
 GR_TTL = 30 * 86400  # ratings drift slowly; refresh monthly
 DEFAULT_LIBS = ["toronto", "mississauga"]
 LIB_TAG = {"toronto": "TPL", "mississauga": "MIS"}
@@ -270,7 +271,7 @@ def enrich_goodreads(recs):
     are both cached (keyed by title+author) so repeat runs are free until GR_TTL.
     """
     try:
-        with open(GR_CACHE) as f:
+        with GR_CACHE.open() as f:
             cache = json.load(f)
     except Exception:
         cache = {}
@@ -289,16 +290,16 @@ def enrich_goodreads(recs):
         sys.stderr.write(f"… fetching {len(stale)} Goodreads ratings\n")
         ckeys, tuples = list(stale), list(stale.values())
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for ckey, res in zip(ckeys, ex.map(_gr_lookup, tuples)):
+            for ckey, res in zip(ckeys, ex.map(_gr_lookup, tuples), strict=True):
                 cache[ckey] = {"r": res, "t": now}  # r may be None (negative cache)
         try:
-            os.makedirs(os.path.dirname(GR_CACHE), exist_ok=True)
-            with open(GR_CACHE, "w") as f:
+            GR_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            with GR_CACHE.open("w") as f:
                 json.dump(cache, f)
         except Exception:
             pass
 
-    for rec, k in zip(recs, keys):
+    for rec, k in zip(recs, keys, strict=True):
         hit = cache.get(_gr_key(*k), {}).get("r")
         if hit:
             rec["gr"] = hit
@@ -383,8 +384,8 @@ def best_lib(copies):
     Wait, not hold count: more copies can mean a shorter wait despite more holds.
     """
 
-    def rank(l):
-        it = copies[l]
+    def rank(lib):
+        it = copies[lib]
         if available_now(it):
             return (0, 0)
         return (1, it.get("estimatedWaitDays") or 10**9)
@@ -435,7 +436,7 @@ def render(rec, idx, width):
     if names:
         lines.append(pad + paint(" · ".join(names), "2"))
 
-    lines.append(pad + "    ".join(avail_chunk(l, copies[l]) for l in sorted(copies)))
+    lines.append(pad + "    ".join(avail_chunk(lib, copies[lib]) for lib in sorted(copies)))
 
     url = f"https://libbyapp.com/search/{best_lib(copies)}/search/page-1/{it.get('id')}"
     lines.append(pad + paint(hyperlink("↗ open in Libby", url), "36"))

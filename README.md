@@ -11,8 +11,9 @@ subject tags. A biography of a scientist is tagged *both* `Science` and
 There is no NOT operator in the app.
 
 This queries OverDrive's public **Thunder API** (no key, no auth, no login).
-Each title comes back with its full `subjects[]` list + BISAC codes, so filtering
-happens client-side.
+Each title comes back with its full `subjects[]` list + BISAC codes, so the
+exclusions Libby can't do — dropping biographies, requiring nonfiction — happen
+client-side (genre *includes* are pushed to the API; see Notes).
 
 A title is dropped as a biography (default; disable with `--bio`) if **either**:
 - it has subject id `7` (`Biography & Autobiography`) — catches YA/juvenile bios too, or
@@ -28,7 +29,7 @@ uv run libbynf.py                        # newest nonfiction audiobooks, no bios
 uv run libbynf.py -t ebook               # ebooks instead (also: book, magazine)
 uv run libbynf.py -t audiobook -t ebook  # both formats, merged
 uv run libbynf.py -g history -g science  # narrow to genres (AND)
-uv run libbynf.py --genres               # list the genre names this catalog uses
+uv run libbynf.py --genres               # list this catalog's genre names + ids
 uv run libbynf.py --all-genres -g romance  # fiction too (drop the nonfiction gate)
 uv run libbynf.py --bio                  # keep biographies (default strips them)
 uv run libbynf.py --sort popular -a      # most popular, available to borrow now
