@@ -27,14 +27,20 @@ biographies/memoirs by default, and optionally narrow to specific genres.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 THUNDER = "https://thunder.api.overdrive.com/v2/libraries/{key}/media"
 UA = "libbynf/1.1 (+personal library browser)"
+# Goodreads retired its public API (2020); we query its title-autocomplete endpoint.
+UA_BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+GR_CACHE = os.path.expanduser("~/.cache/libbynf/goodreads.json")
+GR_TTL = 30 * 86400  # ratings drift slowly; refresh monthly
 DEFAULT_LIBS = ["toronto", "mississauga"]
 LIB_TAG = {"toronto": "TPL", "mississauga": "MIS"}
 
@@ -82,6 +88,14 @@ def wait_code(item):
     if d <= 120:
         return "33"      # yellow
     return "31"          # red
+
+
+def human(n):
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n // 1000}k"
+    return str(n)
 
 
 def media_type(s):
@@ -157,6 +171,88 @@ def title_key(item):
 
 def date_of(item):
     return item.get("publishDate") or item.get("estimatedReleaseDate") or ""
+
+
+def _gr_norm(s):
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _gr_key(title, author):
+    return f"{_gr_norm(title)}\t{_gr_norm(author)}"
+
+
+def _gr_pick(title, author, candidates):
+    """First autocomplete candidate whose title+author match ours, with a rating.
+
+    Guards against Goodreads' fuzzy matcher returning a plausible wrong book: the
+    title must equal/prefix ours (or vice versa, to allow subtitles) and the
+    authors must share a word. Returns None rather than risk a wrong rating.
+    """
+    ot, oa = _gr_norm(title), set(_gr_norm(author).split())
+    for b in candidates or []:
+        gt = _gr_norm(b.get("title"))
+        if not (gt == ot or gt.startswith(ot) or ot.startswith(gt)):
+            continue
+        ga = set(_gr_norm((b.get("author") or {}).get("name")).split())
+        if oa and not (oa & ga):
+            continue
+        try:
+            rating = float(b.get("avgRating"))
+        except (TypeError, ValueError):
+            continue
+        if rating <= 0:
+            continue
+        return {"rating": rating, "count": int(b.get("ratingsCount") or 0)}
+    return None
+
+
+def _gr_lookup(key):
+    """Query Goodreads' title-autocomplete (no API key needed) and validate the match."""
+    title, author = key
+    url = "https://www.goodreads.com/book/auto_complete?format=json&q=" + urllib.parse.quote(title)
+    try:
+        with urllib.request.urlopen(
+                urllib.request.Request(url, headers={"User-Agent": UA_BROWSER}), timeout=15) as r:
+            data = json.load(r)
+    except Exception:
+        return None
+    return _gr_pick(title, author, data)
+
+
+def enrich_goodreads(recs):
+    """Attach rec['gr'] = {rating, count} from Goodreads, disk-cached.
+
+    Goodreads retired its API, so this queries the public title-autocomplete
+    endpoint and validates title+author before trusting a rating. Hits and misses
+    are both cached (keyed by title+author) so repeat runs are free until GR_TTL.
+    """
+    try:
+        with open(GR_CACHE) as f:
+            cache = json.load(f)
+    except Exception:
+        cache = {}
+    now = time.time()
+    keys = [(r["item"].get("title") or "", r["item"].get("firstCreatorName") or "") for r in recs]
+
+    stale = {_gr_key(*k): k for k in keys
+             if now - cache.get(_gr_key(*k), {}).get("t", 0) > GR_TTL}
+    if stale:
+        sys.stderr.write(f"… fetching {len(stale)} Goodreads ratings\n")
+        ckeys, tuples = list(stale), list(stale.values())
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for ckey, res in zip(ckeys, ex.map(_gr_lookup, tuples)):
+                cache[ckey] = {"r": res, "t": now}  # r may be None (negative cache)
+        try:
+            os.makedirs(os.path.dirname(GR_CACHE), exist_ok=True)
+            with open(GR_CACHE, "w") as f:
+                json.dump(cache, f)
+        except Exception:
+            pass
+
+    for rec, k in zip(recs, keys):
+        hit = cache.get(_gr_key(*k), {}).get("r")
+        if hit:
+            rec["gr"] = hit
 
 
 def keep(item, args, genres):
@@ -260,7 +356,14 @@ def render(rec, idx, width):
 
     num = paint(f"{idx:>{width}}.", "2")
     title = paint(it.get("title") or "(untitled)", "1")
-    rating = "  " + paint(f"★{it['starRating']}", "33") if it.get("starRating") else ""
+    gr = rec.get("gr")
+    if gr:  # Goodreads (count in the millions is the tell that it isn't OverDrive's)
+        cnt = f" ({human(gr['count'])})" if gr.get("count") else ""
+        rating = "  " + paint(f"★{gr['rating']}{cnt}", "33")
+    elif it.get("starRating"):
+        rating = "  " + paint(f"★{it['starRating']}", "33")
+    else:
+        rating = ""
     lines = [f"{num} {title}{rating}"]
 
     meta = [it.get("firstCreatorName") or "?"]
@@ -300,6 +403,13 @@ def selftest():
     assert not is_nonfiction(fiction, False)                             # drop (fiction)
     assert matches_genres(stanley, ["history"]) and not matches_genres(stanley, ["science"])
     assert matches_genres(fiction, ["romance"])                          # genre substring match
+    assert human(1392620) == "1.4M" and human(2506) == "2k" and human(15) == "15"
+    gr_cands = [{"title": "Raising Human Beings", "author": {"name": "Ross Greene"}, "avgRating": "4.2", "ratingsCount": 2376},
+                {"title": "Human Raised: Nurturing Connection", "author": {"name": "Dana Suskind"}, "avgRating": "4.67", "ratingsCount": 12}]
+    gr_hit = _gr_pick("Human Raised", "Dana Suskind", gr_cands)                   # picks 2nd, not fuzzy 1st
+    assert gr_hit and gr_hit["rating"] == 4.67
+    assert _gr_pick("The Industrial Revolution", "Robert Allen",
+                    [{"title": "The Fourth Industrial Revolution", "author": {"name": "Klaus Schwab"}, "avgRating": "3.56"}]) is None
     print("selftest ok")
 
 
@@ -320,6 +430,9 @@ def main():
     p.add_argument("--bio", action="store_true", help="keep biographies/memoirs (default: strip them)")
     p.add_argument("--adult", action="store_true", help="adult Nonfiction only (drop YA/juvenile)")
     p.add_argument("--min-rating", type=float, default=0.0, metavar="R")
+    p.add_argument("--goodreads", "--gr", action="store_true",
+                   help="show Goodreads rating + #ratings instead of the (stale) OverDrive "
+                        "star; queries Goodreads by title/author, cached in ~/.cache/libbynf")
     p.add_argument("--per-page", type=int, default=100)
     p.add_argument("--scan-pages", type=int, default=25, help="max pages to scan per library")
     p.add_argument("--timeout", type=float, default=20.0, metavar="SEC",
@@ -347,8 +460,11 @@ def main():
         return
 
     recs = collect(args, genres)
+    if args.goodreads:
+        enrich_goodreads(recs)
     if args.json:
-        json.dump([r["item"] for r in recs], sys.stdout, indent=2, ensure_ascii=False)
+        items = [{**r["item"], "goodreads": r["gr"]} if r.get("gr") else r["item"] for r in recs]
+        json.dump(items, sys.stdout, indent=2, ensure_ascii=False)
         return
     if not recs:
         hint = " (try --all-genres, drop -g/--available, or widen --query)"
